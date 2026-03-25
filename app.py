@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from io import BytesIO
 from utils.analyzer import analyze_dataset, get_dataset_summary
@@ -534,6 +535,166 @@ if uploaded_file:
             except Exception as e:
                 st.error(f"Could not plot time series: {str(e)}")
 
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    # Duplicate detector
+    st.markdown('<div class="step-header"><h3 style="margin:0">👯 Duplicate detector</h3><p style="margin:0;color:#888;font-size:0.9rem">Find exact and near-duplicate rows in your dataset</p></div>', unsafe_allow_html=True)
+
+    if st.button("👯 Find duplicates", use_container_width=True):
+        # Exact duplicates
+        exact_dupes = df_to_analyze.duplicated()
+        exact_count = exact_dupes.sum()
+
+        # Near duplicates — same values in key columns
+        numeric_cols_dupe = df_to_analyze.select_dtypes(include='number').columns.tolist()
+        cat_cols_dupe = [c for c in df_to_analyze.select_dtypes(include='object').columns 
+                        if df_to_analyze[c].nunique() < 20]
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total rows", len(df_to_analyze))
+        c2.metric("Exact duplicates", exact_count)
+        c3.metric("Duplicate %", f"{round(exact_count/len(df_to_analyze)*100, 2)}%")
+
+        if exact_count == 0:
+            st.success("No exact duplicates found!")
+        else:
+            st.warning(f"Found {exact_count} exact duplicate rows.")
+            dupe_rows = df_to_analyze[exact_dupes]
+            st.dataframe(dupe_rows.head(20), use_container_width=True)
+            st.download_button(
+                "⬇️ Download duplicate rows",
+                data=dupe_rows.to_csv(index=False),
+                file_name="blindspot_duplicates.csv",
+                mime="text/csv"
+            )
+
+        st.markdown("---")
+
+        # Near duplicates by numeric similarity
+        if len(numeric_cols_dupe) >= 2:
+            st.markdown("#### Near-duplicate analysis")
+            st.caption("Rows with very similar numeric values — potential soft duplicates")
+
+            sample_cols = numeric_cols_dupe[:4]
+            df_numeric = df_to_analyze[sample_cols].dropna()
+
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.neighbors import NearestNeighbors
+
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(df_numeric)
+
+            nn = NearestNeighbors(n_neighbors=2, metric='euclidean')
+            nn.fit(scaled)
+            distances, indices = nn.kneighbors(scaled)
+
+            threshold = 0.1
+            near_dupe_mask = distances[:, 1] < threshold
+            near_dupe_count = near_dupe_mask.sum()
+
+            c1, c2 = st.columns(2)
+            c1.metric("Near-duplicate pairs", near_dupe_count)
+            c2.metric("Similarity threshold", f"distance < {threshold}")
+
+            if near_dupe_count > 0:
+                near_dupe_indices = df_numeric.index[near_dupe_mask]
+                near_dupe_rows = df_to_analyze.loc[near_dupe_indices]
+                st.dataframe(near_dupe_rows.head(20), use_container_width=True)
+                st.download_button(
+                    "⬇️ Download near-duplicate rows",
+                    data=near_dupe_rows.to_csv(index=False),
+                    file_name="blindspot_near_duplicates.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.success("No near-duplicates found in numeric columns!")
+
+            # Distance distribution chart
+            fig = px.histogram(
+                x=distances[:, 1],
+                title="Distribution of nearest-neighbor distances",
+                labels={"x": "Distance to nearest neighbor"},
+                color_discrete_sequence=["#667eea"]
+            )
+            fig.add_vline(x=threshold, line_dash="dash", line_color="#fc8181",
+                         annotation_text="Duplicate threshold")
+            fig.update_layout(height=300, margin=dict(t=40, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+            
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    # Outlier explorer
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔎 Outlier explorer</h3><p style="margin:0;color:#888;font-size:0.9rem">Find and inspect statistical outliers in any numeric column</p></div>', unsafe_allow_html=True)
+
+    numeric_cols_outlier = df_to_analyze.select_dtypes(include='number').columns.tolist()
+
+    if not numeric_cols_outlier:
+        st.info("No numeric columns found for outlier detection.")
+    else:
+        outlier_col = st.selectbox("Select column to inspect", numeric_cols_outlier, key="outlier_col")
+
+        if st.button("🔎 Find outliers", use_container_width=True):
+            from scipy import stats
+            col_data = df_to_analyze[outlier_col].dropna()
+            z_scores = np.abs(stats.zscore(col_data))
+            outlier_mask = z_scores > 3
+
+            outlier_count = outlier_mask.sum()
+            outlier_pct = round(outlier_count / len(col_data) * 100, 2)
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total rows", len(col_data))
+            c2.metric("Outliers found", outlier_count)
+            c3.metric("Outlier %", f"{outlier_pct}%")
+            c4.metric("Z-score threshold", "3.0")
+
+            if outlier_count == 0:
+                st.success(f"No outliers found in '{outlier_col}' — data looks clean!")
+            else:
+                # Highlight outliers in distribution
+                df_plot = df_to_analyze[[outlier_col]].copy()
+                df_plot['is_outlier'] = z_scores.reindex(df_plot.index).fillna(False) > 3
+                df_plot['is_outlier'] = df_plot['is_outlier'].map({True: 'Outlier', False: 'Normal'})
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = px.histogram(
+                        df_plot,
+                        x=outlier_col,
+                        color='is_outlier',
+                        title=f"Distribution of {outlier_col} — outliers highlighted",
+                        color_discrete_map={'Normal': '#667eea', 'Outlier': '#fc8181'},
+                        barmode='overlay'
+                    )
+                    fig.update_layout(height=350, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col2:
+                    fig = px.box(
+                        df_to_analyze,
+                        y=outlier_col,
+                        title=f"Box plot — {outlier_col}",
+                        color_discrete_sequence=["#667eea"],
+                        points="outliers"
+                    )
+                    fig.update_layout(height=350, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Show actual outlier rows
+                st.markdown(f"#### 📋 Outlier rows ({outlier_count} records)")
+                outlier_indices = col_data[outlier_mask].index
+                outlier_rows = df_to_analyze.loc[outlier_indices].copy()
+                outlier_rows['z_score'] = z_scores[outlier_mask].values
+                outlier_rows = outlier_rows.sort_values('z_score', ascending=False)
+                st.dataframe(outlier_rows, use_container_width=True)
+
+                # Download outlier rows
+                st.download_button(
+                    "⬇️ Download outlier rows (CSV)",
+                    data=outlier_rows.to_csv(index=False),
+                    file_name=f"blindspot_outliers_{outlier_col}.csv",
+                    mime="text/csv"
+                )
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 4 — Correlation matrix
