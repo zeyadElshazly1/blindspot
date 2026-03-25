@@ -26,8 +26,8 @@ with st.sidebar:
     st.markdown("**How it works:**")
     st.markdown("1. Upload a CSV or Excel file")
     st.markdown("2. Auto-clean your data")
-    st.markdown("3. AI scans every column combination")
-    st.markdown("4. Get plain English insights ranked by impact")
+    st.markdown("3. Profile every column")
+    st.markdown("4. AI scans for hidden insights")
 
 # File upload
 uploaded_file = st.file_uploader(
@@ -184,7 +184,97 @@ if uploaded_file:
         )
 
     st.markdown("---")
-    st.markdown("## 🔍 Step 2 — Analyze your data")
+    st.markdown("## 📊 Step 2 — Data profile report")
+    st.caption("A full overview of every column in your dataset.")
+
+    if st.button("📊 Generate profile report", use_container_width=True):
+        from utils.profiler import profile_dataset
+        with st.spinner("Profiling your data..."):
+            profile = profile_dataset(st.session_state.df_working)
+
+        st.success(f"Profiled {len(profile)} columns successfully!")
+
+        # Summary row
+        numeric_count = sum(1 for p in profile if p["type"] == "numeric")
+        cat_count = sum(1 for p in profile if p["type"] == "categorical")
+        dt_count = sum(1 for p in profile if p["type"] == "datetime")
+        flagged_count = sum(1 for p in profile if p["flags"])
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Numeric columns", numeric_count)
+        c2.metric("Categorical columns", cat_count)
+        c3.metric("Datetime columns", dt_count)
+        c4.metric("Columns with issues", flagged_count)
+
+        st.markdown("---")
+
+        for p in profile:
+            with st.expander(f"**{p['column']}** — {p['type']} · {p['missing_pct']}% missing · {p['unique']} unique values {'⚠️' if p['flags'] else '✅'}"):
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Type", p["type"])
+                col2.metric("Missing", f"{p['missing_pct']}%")
+                col3.metric("Unique values", p["unique"])
+
+                if p["flags"]:
+                    st.warning(f"Issues detected: {', '.join(p['flags'])}")
+
+                if p["type"] == "numeric":
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Mean", p["mean"])
+                    c2.metric("Median", p["median"])
+                    c3.metric("Std", p["std"])
+                    c4.metric("Min", p["min"])
+                    c5.metric("Max", p["max"])
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Skewness", p["skewness"])
+                    c2.metric("Outliers", p["outliers"])
+                    c3.metric("Zeros", p["zeros"])
+
+                    # Distribution chart
+                    fig = px.histogram(
+                        st.session_state.df_working,
+                        x=p["column"],
+                        title=f"Distribution of {p['column']}",
+                        color_discrete_sequence=["#3498db"]
+                    )
+                    fig.update_layout(height=250, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                elif p["type"] == "categorical":
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Most common", p["most_common"])
+                        st.metric("Most common %", f"{p['most_common_pct']}%")
+                    with col2:
+                        st.markdown("**Top values:**")
+                        for val, count in list(p["top_values"].items())[:5]:
+                            st.markdown(f"- `{val}`: {count:,}")
+
+                    # Bar chart of top values
+                    top_df = pd.DataFrame(
+                        list(p["top_values"].items()),
+                        columns=[p["column"], "count"]
+                    )
+                    fig = px.bar(
+                        top_df, x=p["column"], y="count",
+                        title=f"Top values in {p['column']}",
+                        color="count",
+                        color_continuous_scale="Blues"
+                    )
+                    fig.update_layout(height=250, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                elif p["type"] == "datetime":
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Earliest", p["min"])
+                    col2.metric("Latest", p["max"])
+                    col3.metric("Range (days)", p["range_days"])
+
+    st.markdown("---")
+    st.markdown("## 🔍 Step 3 — Analyze your data")
+    
 
     # Use cleaned df if available
     df_to_analyze = st.session_state.df_working
