@@ -76,8 +76,10 @@ with st.sidebar:
     st.markdown("**1.** Upload a CSV or Excel file")
     st.markdown("**2.** Auto-clean your data")
     st.markdown("**3.** Profile every column")
-    st.markdown("**4.** Find hidden insights")
-    st.markdown("**5.** Export results")
+    st.markdown("**4.** Correlations matrix")
+    st.markdown("**5.** Compare any two columns")
+    st.markdown("**6.** Find hidden insights")
+    st.markdown("**7.** Export results")
     st.markdown("---")
     st.markdown("### 🔗 Links")
     st.markdown("[GitHub](https://github.com) · [Report bug](https://github.com)")
@@ -355,8 +357,132 @@ if uploaded_file:
             )
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
+    # Step 5 — Compare two columns
+    st.markdown('<div class="step-header"><h3 style="margin:0">⚡ Step 5 — Compare two columns</h3><p style="margin:0;color:#888;font-size:0.9rem">Pick any two columns for a deep dive comparison</p></div>', unsafe_allow_html=True)
+
+    all_cols = df_to_analyze.columns.tolist()
+    col_pick1, col_pick2 = st.columns(2)
+    with col_pick1:
+        col_a = st.selectbox("Column A", all_cols, index=0)
+    with col_pick2:
+        col_b = st.selectbox("Column B", all_cols, index=min(1, len(all_cols)-1))
+
+    if st.button("⚡ Compare columns", use_container_width=True):
+        type_a = "numeric" if pd.api.types.is_numeric_dtype(df_to_analyze[col_a]) else "categorical"
+        type_b = "numeric" if pd.api.types.is_numeric_dtype(df_to_analyze[col_b]) else "categorical"
+
+        st.markdown(f"#### Comparing `{col_a}` ({type_a}) vs `{col_b}` ({type_b})")
+
+        # Numeric vs Numeric
+        if type_a == "numeric" and type_b == "numeric":
+            from scipy import stats
+            corr, pvalue = stats.pearsonr(
+                df_to_analyze[col_a].dropna(),
+                df_to_analyze[col_b].dropna()
+            )
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Correlation (r)", round(corr, 3))
+            c2.metric("P-value", round(pvalue, 4))
+            c3.metric("Strength", "Strong" if abs(corr) > 0.7 else "Moderate" if abs(corr) > 0.4 else "Weak")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.scatter(
+                    df_to_analyze.sample(min(1000, len(df_to_analyze))),
+                    x=col_a, y=col_b,
+                    title=f"{col_a} vs {col_b}",
+                    opacity=0.5,
+                    trendline="ols",
+                    color_discrete_sequence=["#667eea"]
+                )
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                fig = px.density_contour(
+                    df_to_analyze,
+                    x=col_a, y=col_b,
+                    title=f"Density: {col_a} vs {col_b}",
+                    color_discrete_sequence=["#667eea"]
+                )
+                fig.update_traces(contours_coloring="fill", colorscale="Purples")
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Categorical vs Numeric
+        elif type_a == "categorical" and type_b == "numeric":
+            groups = df_to_analyze.groupby(col_a)[col_b].agg(['mean', 'median', 'std', 'count']).round(2)
+            st.dataframe(groups, use_container_width=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.box(
+                    df_to_analyze, x=col_a, y=col_b,
+                    title=f"Distribution of {col_b} by {col_a}",
+                    color=col_a,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(height=350, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                fig = px.violin(
+                    df_to_analyze, x=col_a, y=col_b,
+                    title=f"Violin: {col_b} by {col_a}",
+                    color=col_a,
+                    color_discrete_sequence=px.colors.qualitative.Set3,
+                    box=True
+                )
+                fig.update_layout(height=350, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Numeric vs Categorical
+        elif type_a == "numeric" and type_b == "categorical":
+            groups = df_to_analyze.groupby(col_b)[col_a].agg(['mean', 'median', 'std', 'count']).round(2)
+            st.dataframe(groups, use_container_width=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.box(
+                    df_to_analyze, x=col_b, y=col_a,
+                    title=f"Distribution of {col_a} by {col_b}",
+                    color=col_b,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(height=350, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                fig = px.violin(
+                    df_to_analyze, x=col_b, y=col_a,
+                    title=f"Violin: {col_a} by {col_b}",
+                    color=col_b,
+                    color_discrete_sequence=px.colors.qualitative.Set3,
+                    box=True
+                )
+                fig.update_layout(height=350, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Categorical vs Categorical
+        else:
+            cross_tab = pd.crosstab(
+                df_to_analyze[col_a],
+                df_to_analyze[col_b],
+                normalize='index'
+            ).round(3)
+            st.markdown("**Cross-tabulation (row %)**")
+            st.dataframe(cross_tab, use_container_width=True)
+
+            fig = px.imshow(
+                cross_tab,
+                title=f"Heatmap: {col_a} vs {col_b}",
+                color_continuous_scale="Blues",
+                text_auto=True,
+                aspect="auto"
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
     # Step 5 — Analyze
-    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Step 5 — Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Step 6 — Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
 
 
     col_btn1, col_btn2 = st.columns(2)
