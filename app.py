@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from utils.analyzer import analyze_dataset, get_dataset_summary
 from utils.agent import run_agent
+from utils.cleaner import clean_dataset
 import anthropic
 
 st.set_page_config(
@@ -24,8 +25,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**How it works:**")
     st.markdown("1. Upload a CSV or Excel file")
-    st.markdown("2. AI scans every column combination")
-    st.markdown("3. Get plain English insights ranked by impact")
+    st.markdown("2. Auto-clean your data")
+    st.markdown("3. AI scans every column combination")
+    st.markdown("4. Get plain English insights ranked by impact")
 
 # File upload
 uploaded_file = st.file_uploader(
@@ -36,10 +38,77 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     # Load data
+    # Load data
     if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
+        df = None
+        error_msg = None
+
+        def try_parse(file, **kwargs):
+            file.seek(0)
+            try:
+                d = pd.read_csv(file, **kwargs)
+                if d.shape[1] > 1 and d.shape[0] > 0:
+                    return d
+            except:
+                pass
+            return None
+
+        # Strategy 1: standard
+        df = try_parse(uploaded_file, encoding='utf-8-sig')
+
+        # Strategy 2: skip metadata rows — find where real data starts
+        if df is None or df.shape[1] <= 1:
+            uploaded_file.seek(0)
+            try:
+                lines = uploaded_file.read().decode('utf-8-sig', errors='replace').splitlines()
+                # Find the header row — the line with the most commas
+                max_commas = 0
+                header_line = 0
+                for idx, line in enumerate(lines):
+                    comma_count = line.count(',')
+                    if comma_count > max_commas:
+                        max_commas = comma_count
+                        header_line = idx
+                if header_line > 0:
+                    from io import StringIO
+                    data_str = '\n'.join(lines[header_line:])
+                    df = pd.read_csv(StringIO(data_str))
+                    if df.shape[1] <= 1 or df.shape[0] == 0:
+                        df = None
+            except Exception as e:
+                error_msg = str(e)
+                df = None
+
+        # Strategy 3: semicolon delimiter
+        if df is None:
+            df = try_parse(uploaded_file, sep=';', encoding='utf-8-sig')
+
+        # Strategy 4: tab delimiter
+        if df is None:
+            df = try_parse(uploaded_file, sep='\t', encoding='utf-8-sig')
+
+        # Strategy 5: latin-1 encoding + skip bad lines
+        if df is None:
+            df = try_parse(uploaded_file, encoding='latin-1', on_bad_lines='skip')
+
+        # Strategy 6: auto-detect separator
+        if df is None:
+            df = try_parse(uploaded_file, sep=None, engine='python', encoding='utf-8-sig')
+
+        if df is None:
+            st.error("Could not parse this CSV file automatically.")
+            st.info("Try opening it in Excel and saving as a fresh CSV, then re-upload.")
+            st.stop()
+
+        # Clean up column names from BOM or whitespace
+        df.columns = df.columns.str.strip().str.replace('\ufeff', '', regex=False)
+
     else:
-        df = pd.read_excel(uploaded_file)
+        try:
+            df = pd.read_excel(uploaded_file)
+        except Exception as e:
+            st.error(f"Could not read Excel file: {str(e)}")
+            st.stop()
 
     # Dataset summary
     summary = get_dataset_summary(df)
@@ -53,10 +122,72 @@ if uploaded_file:
     col5.metric("Missing data", f"{summary['missing_pct']}%")
 
     # Preview
-    with st.expander("Preview data"):
+    with st.expander("Preview raw data"):
         st.dataframe(df.head(10))
 
     st.markdown("---")
+
+    # Cleaning section
+    st.markdown("## 🧹 Step 1 — Clean your data")
+    st.caption("BlindSpot will automatically fix common data issues before analysis.")
+
+    col_clean1, col_clean2 = st.columns([2, 1])
+    with col_clean1:
+        run_cleaning = st.button("🧹 Auto-clean dataset", use_container_width=True)
+    with col_clean2:
+        skip_cleaning = st.button("Skip cleaning", use_container_width=True)
+
+    if "df_working" not in st.session_state:
+        st.session_state.df_working = df.copy()
+        st.session_state.cleaned = False
+
+    if run_cleaning:
+        with st.spinner("Cleaning your data..."):
+            df_clean, clean_report, clean_summary = clean_dataset(df)
+            st.session_state.df_working = df_clean
+            st.session_state.cleaned = True
+            st.session_state.clean_report = clean_report
+            st.session_state.clean_summary = clean_summary
+
+    if skip_cleaning:
+        st.session_state.df_working = df.copy()
+        st.session_state.cleaned = False
+        st.info("Skipped cleaning — using raw data for analysis.")
+
+    if st.session_state.cleaned and "clean_report" in st.session_state:
+        s = st.session_state.clean_summary
+        st.success(f"Dataset cleaned in {s['steps']} steps — {s['rows_removed']} rows and {s['cols_removed']} columns removed.")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Original rows", f"{s['original_rows']:,}")
+        c2.metric("Clean rows", f"{s['final_rows']:,}")
+        c3.metric("Original cols", f"{s['original_cols']}")
+        c4.metric("Clean cols", f"{s['final_cols']}")
+
+        with st.expander("View cleaning report"):
+            for step in st.session_state.clean_report:
+                impact_color = {
+                    "high": "🔴", "medium": "🟡", "low": "🟢"
+                }.get(step["impact"], "⚪")
+                st.markdown(f"{impact_color} **{step['step']}** — {step['detail']}")
+
+        with st.expander("Preview cleaned data"):
+            st.dataframe(st.session_state.df_working.head(10))
+
+        # Download cleaned data
+        csv = st.session_state.df_working.to_csv(index=False)
+        st.download_button(
+            label="Download cleaned CSV",
+            data=csv,
+            file_name="blindspot_cleaned.csv",
+            mime="text/csv"
+        )
+
+    st.markdown("---")
+    st.markdown("## 🔍 Step 2 — Analyze your data")
+
+    # Use cleaned df if available
+    df_to_analyze = st.session_state.df_working
 
     # Buttons
     col_btn1, col_btn2 = st.columns(2)
@@ -67,7 +198,7 @@ if uploaded_file:
 
     if run_basic:
         with st.spinner("Scanning your data for hidden patterns..."):
-            insights = analyze_dataset(df)
+            insights = analyze_dataset(df_to_analyze)
 
         st.success(f"Found {len(insights)} insights you might have missed!")
         st.markdown("---")
@@ -96,8 +227,8 @@ if uploaded_file:
                         parts = insight["title"].replace("Segment gap: ", "").replace("Rate gap: ", "").split(" vs ")
                         cat_col = parts[0].strip()
                         num_col = parts[1].strip()
-                        if cat_col in df.columns and num_col in df.columns:
-                            chart_data = df.groupby(cat_col)[num_col].mean().reset_index()
+                        if cat_col in df_to_analyze.columns and num_col in df_to_analyze.columns:
+                            chart_data = df_to_analyze.groupby(cat_col)[num_col].mean().reset_index()
                             chart_data.columns = [cat_col, f"avg_{num_col}"]
                             fig = px.bar(
                                 chart_data, x=cat_col, y=f"avg_{num_col}",
@@ -115,9 +246,9 @@ if uploaded_file:
                         parts = insight["title"].replace("Hidden relationship: ", "").split(" and ")
                         col1_name = parts[0].strip()
                         col2_name = parts[1].strip()
-                        if col1_name in df.columns and col2_name in df.columns:
+                        if col1_name in df_to_analyze.columns and col2_name in df_to_analyze.columns:
                             fig = px.scatter(
-                                df.sample(min(500, len(df))),
+                                df_to_analyze.sample(min(500, len(df_to_analyze))),
                                 x=col1_name, y=col2_name,
                                 title=f"{col1_name} vs {col2_name}",
                                 opacity=0.5,
@@ -155,7 +286,7 @@ if uploaded_file:
                 status.info(f"🔍 {msg}")
 
             with st.spinner("Agent is analyzing your data..."):
-                report = run_agent(df, openai_key, status_callback=update_status)
+                report = run_agent(df_to_analyze, openai_key, status_callback=update_status)
 
             status.empty()
             st.success("Agent analysis complete!")
@@ -164,3 +295,4 @@ if uploaded_file:
 
 else:
     st.info("Upload a CSV or Excel file to get started. Try your churn dataset!")
+    
