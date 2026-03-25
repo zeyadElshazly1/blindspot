@@ -5,6 +5,8 @@ from utils.analyzer import analyze_dataset, get_dataset_summary
 from utils.agent import run_agent
 from utils.cleaner import clean_dataset
 import anthropic
+from io import BytesIO
+
 
 st.set_page_config(
     page_title="BlindSpot — AI Data Analyzer",
@@ -364,6 +366,44 @@ if uploaded_file:
                             st.info(message.content[0].text)
 
                 st.markdown("---")
+        
+    # Export insights as Excel
+        if insights:
+            st.markdown("### 📥 Export results")
+            col_exp1, col_exp2 = st.columns(2)
+
+            with col_exp1:
+                # Export insights to Excel
+                output = BytesIO()
+                insights_df = pd.DataFrame([{
+                    "Title": ins["title"],
+                    "Type": ins["type"],
+                    "Finding": ins["finding"],
+                    "Recommended Action": ins["action"],
+                    "Confidence %": ins["confidence"]
+                } for ins in insights])
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    insights_df.to_excel(writer, sheet_name="Insights", index=False)
+                    st.session_state.df_working.to_excel(writer, sheet_name="Cleaned Data", index=False)
+                output.seek(0)
+                st.download_button(
+                    label="📊 Download insights + data (Excel)",
+                    data=output,
+                    file_name="blindspot_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+            with col_exp2:
+                # Export insights as CSV
+                csv_insights = insights_df.to_csv(index=False)
+                st.download_button(
+                    label="📄 Download insights (CSV)",
+                    data=csv_insights,
+                    file_name="blindspot_insights.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
     if run_agent_btn:
         if not openai_key:
@@ -382,6 +422,14 @@ if uploaded_file:
             st.success("Agent analysis complete!")
             st.markdown("---")
             st.markdown(report)
+            # Export agent report
+            st.download_button(
+                label="📄 Download agent report (TXT)",
+                data=report,
+                file_name="blindspot_agent_report.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
 
 else:
     st.info("Upload a CSV or Excel file to get started. Try your churn dataset!")
