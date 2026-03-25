@@ -620,7 +620,7 @@ if uploaded_file:
                          annotation_text="Duplicate threshold")
             fig.update_layout(height=300, margin=dict(t=40, b=20))
             st.plotly_chart(fig, use_container_width=True)
-            
+
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Outlier explorer
@@ -695,6 +695,132 @@ if uploaded_file:
                     file_name=f"blindspot_outliers_{outlier_col}.csv",
                     mime="text/csv"
                 )
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    # Natural language query
+    st.markdown('<div class="step-header"><h3 style="margin:0">💬 Ask your data anything</h3><p style="margin:0;color:#888;font-size:0.9rem">Type a question in plain English — get a chart back</p></div>', unsafe_allow_html=True)
+
+    if not openai_key:
+        st.info("Add your OpenAI API key in the sidebar to use this feature.")
+    else:
+        query_examples = [
+            "Show me churn rate by contract type",
+            "What is the average monthly charges by internet service?",
+            "How many customers are in each payment method?",
+            "Show the distribution of tenure",
+            "Compare monthly charges vs total charges"
+        ]
+
+        st.caption("Examples: " + " · ".join([f"`{q}`" for q in query_examples[:3]]))
+
+        user_query = st.text_input(
+            "Ask a question about your data",
+            placeholder="e.g. Show me churn rate by contract type"
+        )
+
+        if st.button("💬 Generate chart", use_container_width=True) and user_query:
+            with st.spinner("Thinking..."):
+                import openai
+                import json
+
+                client = openai.OpenAI(api_key=openai_key)
+
+                # Build column context
+                col_context = []
+                for col in df_to_analyze.columns:
+                    dtype = str(df_to_analyze[col].dtype)
+                    if df_to_analyze[col].dtype == object:
+                        unique_vals = df_to_analyze[col].unique()[:5].tolist()
+                        col_context.append(f"{col} (categorical, examples: {unique_vals})")
+                    else:
+                        col_context.append(f"{col} (numeric, range: {df_to_analyze[col].min():.1f} - {df_to_analyze[col].max():.1f})")
+
+                prompt = f"""You are a data analyst. The user has a dataset with these columns:
+{chr(10).join(col_context)}
+
+The user asked: "{user_query}"
+
+Respond with ONLY a JSON object (no markdown, no explanation) with this structure:
+{{
+    "chart_type": "bar" | "line" | "scatter" | "histogram" | "pie" | "box",
+    "x": "column_name",
+    "y": "column_name or null",
+    "aggregation": "mean" | "sum" | "count" | "none",
+    "color": "column_name or null",
+    "title": "chart title",
+    "explanation": "one sentence explaining what this shows"
+}}
+
+Rules:
+- x must be a real column name from the list above
+- y must be a real column name or null
+- For count charts use aggregation "count" and y can be null
+- For rate/average charts use aggregation "mean"
+- chart_type should match the question intent"""
+
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0
+                )
+
+                try:
+                    raw = response.choices[0].message.content
+                    raw = raw.replace("```json", "").replace("```", "").strip()
+                    chart_spec = json.loads(raw)
+
+                    st.markdown(f"**{chart_spec['explanation']}**")
+
+                    df_chart = df_to_analyze.copy()
+
+                    # Apply aggregation
+                    if chart_spec["aggregation"] == "count" and chart_spec["x"]:
+                        df_chart = df_chart[chart_spec["x"]].value_counts().reset_index()
+                        df_chart.columns = [chart_spec["x"], "count"]
+                        chart_spec["y"] = "count"
+
+                    elif chart_spec["aggregation"] in ["mean", "sum"] and chart_spec["x"] and chart_spec["y"]:
+                        agg_func = "mean" if chart_spec["aggregation"] == "mean" else "sum"
+                        if chart_spec["color"]:
+                            df_chart = df_chart.groupby([chart_spec["x"], chart_spec["color"]])[chart_spec["y"]].agg(agg_func).reset_index()
+                        else:
+                            df_chart = df_chart.groupby(chart_spec["x"])[chart_spec["y"]].agg(agg_func).reset_index()
+
+                    # Generate chart
+                    chart_type = chart_spec["chart_type"]
+                    x = chart_spec["x"]
+                    y = chart_spec.get("y")
+                    color = chart_spec.get("color")
+                    title = chart_spec.get("title", user_query)
+
+                    if chart_type == "bar" and y:
+                        fig = px.bar(df_chart, x=x, y=y, color=color, title=title,
+                                    color_discrete_sequence=px.colors.qualitative.Set3)
+                    elif chart_type == "line" and y:
+                        fig = px.line(df_chart, x=x, y=y, color=color, title=title,
+                                     color_discrete_sequence=["#667eea"])
+                    elif chart_type == "scatter" and y:
+                        fig = px.scatter(df_chart.sample(min(1000, len(df_chart))),
+                                        x=x, y=y, color=color, title=title,
+                                        opacity=0.6, color_discrete_sequence=["#667eea"])
+                    elif chart_type == "histogram":
+                        fig = px.histogram(df_chart, x=x, color=color, title=title,
+                                          color_discrete_sequence=["#667eea"])
+                    elif chart_type == "pie" and y:
+                        fig = px.pie(df_chart, names=x, values=y, title=title)
+                    elif chart_type == "box" and y:
+                        fig = px.box(df_chart, x=x, y=y, color=color, title=title,
+                                    color_discrete_sequence=px.colors.qualitative.Set3)
+                    else:
+                        fig = px.bar(df_chart, x=x, y=y, title=title,
+                                    color_discrete_sequence=["#667eea"])
+
+                    fig.update_layout(height=400, margin=dict(t=50, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Could not generate chart: {str(e)}")
+                    st.code(response.choices[0].message.content)
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 4 — Correlation matrix
