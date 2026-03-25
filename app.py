@@ -85,7 +85,7 @@ with st.sidebar:
     st.markdown("[GitHub](https://github.com) · [Report bug](https://github.com)")
 
 # File upload
-st.markdown('<div class="step-header"><h3 style="margin:0">📁 Step 1 — Upload your dataset</h3></div>', unsafe_allow_html=True)
+st.markdown('<div class="step-header"><h3 style="margin:0">📁 Upload your dataset</h3></div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
     "Drag and drop any CSV or Excel file",
@@ -326,7 +326,7 @@ if uploaded_file:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 2 — Cleaning
-    st.markdown('<div class="step-header"><h3 style="margin:0">🧹 Step 2 — Clean your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Auto-fix nulls, duplicates, data types, outliers and whitespace</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">🧹 Clean your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Auto-fix nulls, duplicates, data types, outliers and whitespace</p></div>', unsafe_allow_html=True)
 
     col_clean1, col_clean2 = st.columns([2, 1])
     with col_clean1:
@@ -376,7 +376,7 @@ if uploaded_file:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 3 — Profile
-    st.markdown('<div class="step-header"><h3 style="margin:0">📊 Step 3 — Data profile report</h3><p style="margin:0;color:#888;font-size:0.9rem">Full stats and distribution for every column</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">📊 Data profile report</h3><p style="margin:0;color:#888;font-size:0.9rem">Full stats and distribution for every column</p></div>', unsafe_allow_html=True)
 
     if st.button("📊 Generate profile report", use_container_width=True):
         from utils.profiler import profile_dataset
@@ -453,8 +453,91 @@ if uploaded_file:
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
+    # Auto time series detection
+    date_cols = [col for col in df_to_analyze.columns 
+                 if pd.api.types.is_datetime64_any_dtype(df_to_analyze[col])
+                 or any(word in col.lower() for word in ['date', 'time', 'year', 'month', 'day'])]
+
+    if date_cols:
+        st.markdown('<div class="step-header"><h3 style="margin:0">📈 Time series detected</h3><p style="margin:0;color:#888;font-size:0.9rem">Date columns found — auto-plotting trends over time</p></div>', unsafe_allow_html=True)
+
+        numeric_cols_ts = df_to_analyze.select_dtypes(include='number').columns.tolist()
+
+        col_ts1, col_ts2 = st.columns(2)
+        with col_ts1:
+            date_col_selected = st.selectbox("Date column", date_cols)
+        with col_ts2:
+            metric_col_selected = st.selectbox("Metric to plot", numeric_cols_ts)
+
+        if st.button("📈 Plot time series", use_container_width=True):
+            try:
+                df_ts = df_to_analyze.copy()
+                df_ts[date_col_selected] = pd.to_datetime(df_ts[date_col_selected], errors='coerce')
+                df_ts = df_ts.dropna(subset=[date_col_selected])
+                df_ts = df_ts.sort_values(date_col_selected)
+
+                # Determine best frequency
+                date_range = (df_ts[date_col_selected].max() - df_ts[date_col_selected].min()).days
+                if date_range > 365 * 2:
+                    freq = 'M'
+                    freq_label = "Monthly"
+                elif date_range > 90:
+                    freq = 'W'
+                    freq_label = "Weekly"
+                else:
+                    freq = 'D'
+                    freq_label = "Daily"
+
+                df_resampled = df_ts.set_index(date_col_selected)[metric_col_selected]\
+                    .resample(freq).mean().reset_index()
+                df_resampled.columns = [date_col_selected, metric_col_selected]
+
+                # Trend line
+                col_ts_chart1, col_ts_chart2 = st.columns(2)
+
+                with col_ts_chart1:
+                    fig = px.line(
+                        df_resampled,
+                        x=date_col_selected,
+                        y=metric_col_selected,
+                        title=f"{freq_label} average {metric_col_selected} over time",
+                        color_discrete_sequence=["#667eea"]
+                    )
+                    fig.update_traces(line_width=2)
+                    fig.update_layout(height=350, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col_ts_chart2:
+                    fig = px.bar(
+                        df_resampled,
+                        x=date_col_selected,
+                        y=metric_col_selected,
+                        title=f"{freq_label} {metric_col_selected} — bar view",
+                        color=metric_col_selected,
+                        color_continuous_scale="Purples"
+                    )
+                    fig.update_layout(height=350, margin=dict(t=40, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Stats
+                first_val = df_resampled[metric_col_selected].iloc[0]
+                last_val = df_resampled[metric_col_selected].iloc[-1]
+                change_pct = round((last_val - first_val) / first_val * 100, 1) if first_val != 0 else 0
+                trend = "increasing" if change_pct > 0 else "decreasing"
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("First value", round(first_val, 2))
+                c2.metric("Last value", round(last_val, 2))
+                c3.metric("Overall trend", trend)
+                c4.metric("Total change", f"{change_pct}%", delta=f"{change_pct}%")
+
+            except Exception as e:
+                st.error(f"Could not plot time series: {str(e)}")
+
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
     # Step 4 — Correlation matrix
-    st.markdown('<div class="step-header"><h3 style="margin:0">🔗 Step 4 — Correlation matrix</h3><p style="margin:0;color:#888;font-size:0.9rem">See how every numeric column relates to every other</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔗 Correlation matrix</h3><p style="margin:0;color:#888;font-size:0.9rem">See how every numeric column relates to every other</p></div>', unsafe_allow_html=True)
 
     numeric_cols_list = df_to_analyze.select_dtypes(include='number').columns.tolist()
 
@@ -509,7 +592,7 @@ if uploaded_file:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 5 — Compare two columns
-    st.markdown('<div class="step-header"><h3 style="margin:0">⚡ Step 5 — Compare two columns</h3><p style="margin:0;color:#888;font-size:0.9rem">Pick any two columns for a deep dive comparison</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">⚡ Compare two columns</h3><p style="margin:0;color:#888;font-size:0.9rem">Pick any two columns for a deep dive comparison</p></div>', unsafe_allow_html=True)
 
     all_cols = df_to_analyze.columns.tolist()
     col_pick1, col_pick2 = st.columns(2)
@@ -633,7 +716,7 @@ if uploaded_file:
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     # Step 5 — Analyze
-    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Step 6 — Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
 
 
     col_btn1, col_btn2 = st.columns(2)
