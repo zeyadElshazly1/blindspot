@@ -166,6 +166,47 @@ if uploaded_file:
 
     with st.expander("👁️ Preview raw data"):
         st.dataframe(df.head(10), use_container_width=True)
+    # Data health score
+    from utils.profiler import calculate_health_score
+    health = calculate_health_score(df)
+
+    st.markdown("### 🏥 Dataset health score")
+    col_h1, col_h2, col_h3 = st.columns([1, 2, 2])
+
+    with col_h1:
+        st.markdown(f"""
+        <div style="text-align:center;padding:1rem;background:#1a1a2e;border-radius:12px;border:2px solid {health['color']}">
+            <div style="font-size:3rem;font-weight:800;color:{health['color']}">{health['total']}</div>
+            <div style="font-size:1.5rem;font-weight:700;color:{health['color']}">{health['grade']}</div>
+            <div style="color:#888;font-size:0.9rem">{health['label']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_h2:
+        st.markdown("**Score breakdown:**")
+        for dimension, score in health["breakdown"].items():
+            max_score = health["max_scores"][dimension]
+            pct = score / max_score * 100
+            bar_color = "#68d391" if pct >= 80 else "#f6ad55" if pct >= 50 else "#fc8181"
+            st.markdown(f"""
+            <div style="margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+                    <span style="font-size:0.85rem;text-transform:capitalize">{dimension}</span>
+                    <span style="font-size:0.85rem;color:#888">{score}/{max_score}</span>
+                </div>
+                <div style="background:#2a2a4e;border-radius:4px;height:8px">
+                    <div style="background:{bar_color};width:{pct}%;height:8px;border-radius:4px"></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_h3:
+        if health["deductions"]:
+            st.markdown("**Issues found:**")
+            for d in health["deductions"]:
+                st.markdown(f"🔴 {d}")
+        else:
+            st.success("No issues found — dataset is clean!")
 
     # Initialize session state
     if "df_working" not in st.session_state:
