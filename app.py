@@ -296,13 +296,68 @@ if uploaded_file:
                     col1.metric("Earliest", p["min"])
                     col2.metric("Latest", p["max"])
                     col3.metric("Range (days)", p["range_days"])
+    df_to_analyze = st.session_state.df_working
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-    # Step 4 — Analyze
-    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Step 4 — Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
+    # Step 4 — Correlation matrix
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔗 Step 4 — Correlation matrix</h3><p style="margin:0;color:#888;font-size:0.9rem">See how every numeric column relates to every other</p></div>', unsafe_allow_html=True)
 
-    df_to_analyze = st.session_state.df_working
+    numeric_cols_list = df_to_analyze.select_dtypes(include='number').columns.tolist()
+
+    if len(numeric_cols_list) < 2:
+        st.info("Need at least 2 numeric columns to show a correlation matrix.")
+    else:
+        if st.button("🔗 Generate correlation matrix", use_container_width=True):
+            corr_matrix = df_to_analyze[numeric_cols_list].corr().round(2)
+
+            fig = px.imshow(
+                corr_matrix,
+                title="Correlation matrix — all numeric columns",
+                color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1,
+                text_auto=True,
+                aspect="auto"
+            )
+            fig.update_layout(
+                height=500,
+                margin=dict(t=60, b=20),
+                coloraxis_colorbar=dict(title="r value")
+            )
+            fig.update_traces(textfont_size=11)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Top correlations table
+            st.markdown("#### Top correlations")
+            pairs = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    col_a = corr_matrix.columns[i]
+                    col_b = corr_matrix.columns[j]
+                    r = corr_matrix.iloc[i, j]
+                    pairs.append({
+                        "Column A": col_a,
+                        "Column B": col_b,
+                        "Correlation (r)": r,
+                        "Strength": "Strong" if abs(r) > 0.7 else "Moderate" if abs(r) > 0.4 else "Weak",
+                        "Direction": "Positive" if r > 0 else "Negative"
+                    })
+
+            pairs_df = pd.DataFrame(pairs).sort_values("Correlation (r)", key=abs, ascending=False)
+            st.dataframe(pairs_df, use_container_width=True, hide_index=True)
+
+            # Download
+            st.download_button(
+                "⬇️ Download correlation table (CSV)",
+                data=pairs_df.to_csv(index=False),
+                file_name="blindspot_correlations.csv",
+                mime="text/csv"
+            )
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    # Step 5 — Analyze
+    st.markdown('<div class="step-header"><h3 style="margin:0">🔍 Step 5 — Analyze your data</h3><p style="margin:0;color:#888;font-size:0.9rem">Find hidden patterns, anomalies and segment gaps</p></div>', unsafe_allow_html=True)
+
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
