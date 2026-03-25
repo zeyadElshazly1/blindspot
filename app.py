@@ -164,8 +164,6 @@ if uploaded_file:
     col4.metric("🏷️ Categorical", f"{summary['categorical_cols']}")
     col5.metric("❓ Missing", f"{summary['missing_pct']}%")
 
-    with st.expander("👁️ Preview raw data"):
-        st.dataframe(df.head(10), use_container_width=True)
     # Data health score
     from utils.profiler import calculate_health_score
     health = calculate_health_score(df)
@@ -208,10 +206,122 @@ if uploaded_file:
         else:
             st.success("No issues found — dataset is clean!")
 
-    # Initialize session state
+    # Initialize session state (before cleaning UI; expander needs df_working)
     if "df_working" not in st.session_state:
         st.session_state.df_working = df.copy()
         st.session_state.cleaned = False
+
+    with st.expander("👁️ Before / After cleaning comparison"):
+        if not st.session_state.cleaned:
+            st.info("Run auto-clean first to see the comparison.")
+        else:
+            tab1, tab2, tab3 = st.tabs(["Side by side", "What changed", "Health score improvement"])
+
+            with tab1:
+                col_before, col_after = st.columns(2)
+                with col_before:
+                    st.markdown("**Before cleaning**")
+                    st.dataframe(df.head(10), use_container_width=True)
+                with col_after:
+                    st.markdown("**After cleaning**")
+                    st.dataframe(st.session_state.df_working.head(10), use_container_width=True)
+
+            with tab2:
+                changes = []
+                # Shape changes
+                if df.shape[0] != st.session_state.df_working.shape[0]:
+                    changes.append({
+                        "Change": "Rows removed",
+                        "Before": df.shape[0],
+                        "After": st.session_state.df_working.shape[0],
+                        "Difference": df.shape[0] - st.session_state.df_working.shape[0]
+                    })
+                if df.shape[1] != st.session_state.df_working.shape[1]:
+                    changes.append({
+                        "Change": "Columns removed",
+                        "Before": df.shape[1],
+                        "After": st.session_state.df_working.shape[1],
+                        "Difference": df.shape[1] - st.session_state.df_working.shape[1]
+                    })
+                # Missing values
+                missing_before = df.isnull().sum().sum()
+                missing_after = st.session_state.df_working.isnull().sum().sum()
+                changes.append({
+                    "Change": "Missing values",
+                    "Before": missing_before,
+                    "After": missing_after,
+                    "Difference": missing_before - missing_after
+                })
+                # Duplicates
+                dupes_before = df.duplicated().sum()
+                dupes_after = st.session_state.df_working.duplicated().sum()
+                changes.append({
+                    "Change": "Duplicate rows",
+                    "Before": dupes_before,
+                    "After": dupes_after,
+                    "Difference": dupes_before - dupes_after
+                })
+                # Data types
+                types_before = df.dtypes.value_counts().to_dict()
+                types_after = st.session_state.df_working.dtypes.value_counts().to_dict()
+                changes.append({
+                    "Change": "Numeric columns",
+                    "Before": sum(1 for t in df.dtypes if t in ['int64', 'float64']),
+                    "After": sum(1 for t in st.session_state.df_working.dtypes if t in ['int64', 'float64']),
+                    "Difference": sum(1 for t in st.session_state.df_working.dtypes if t in ['int64', 'float64']) - sum(1 for t in df.dtypes if t in ['int64', 'float64'])
+                })
+
+                changes_df = pd.DataFrame(changes)
+                st.dataframe(changes_df, use_container_width=True, hide_index=True)
+
+                # Visual comparison
+                fig = px.bar(
+                    changes_df,
+                    x="Change",
+                    y=["Before", "After"],
+                    title="Before vs After cleaning",
+                    barmode="group",
+                    color_discrete_sequence=["#fc8181", "#68d391"]
+                )
+                fig.update_layout(height=300, margin=dict(t=40, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab3:
+                from utils.profiler import calculate_health_score
+                health_before = calculate_health_score(df)
+                health_after = calculate_health_score(st.session_state.df_working)
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric(
+                    "Score before",
+                    f"{health_before['total']} ({health_before['grade']})",
+                )
+                col2.metric(
+                    "Score after",
+                    f"{health_after['total']} ({health_after['grade']})",
+                    delta=f"+{round(health_after['total'] - health_before['total'], 1)}"
+                )
+                col3.metric(
+                    "Improvement",
+                    f"{round(health_after['total'] - health_before['total'], 1)} pts"
+                )
+
+                # Side by side breakdown
+                breakdown_df = pd.DataFrame({
+                    "Dimension": list(health_before["breakdown"].keys()),
+                    "Before": list(health_before["breakdown"].values()),
+                    "After": list(health_after["breakdown"].values()),
+                })
+                fig = px.bar(
+                    breakdown_df,
+                    x="Dimension",
+                    y=["Before", "After"],
+                    title="Health score breakdown — before vs after",
+                    barmode="group",
+                    color_discrete_sequence=["#fc8181", "#68d391"]
+                )
+                fig.update_layout(height=300, margin=dict(t=40, b=20))
+                st.plotly_chart(fig, use_container_width=True)
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
