@@ -13,10 +13,16 @@ explores your data and surfaces hidden insights — no SQL, no code, no dashboar
 
 | Feature | Description |
 |---------|-------------|
+| 🏥 Health score | Instant data quality score out of 100 with breakdown across 5 dimensions |
 | 🧹 Smart cleaning | Auto-fixes nulls, duplicates, wrong types, outliers, whitespace — handles messy CSVs |
+| 👁️ Before/After comparison | Side by side view of what changed after cleaning with health score improvement |
 | 📊 Data profiling | Full column-by-column report with stats, distributions and quality flags |
+| 📈 Time series detection | Auto-detects date columns and plots trends over time |
+| 👯 Duplicate detector | Finds exact and near-duplicate rows using machine learning |
+| 🔎 Outlier explorer | Inspect statistical outliers with distribution charts and downloadable rows |
 | 🔗 Correlation matrix | Interactive heatmap of all numeric relationships with ranked table |
 | ⚡ Column comparison | Pick any two columns — auto-selects the right chart type |
+| 💬 Natural language query | Type "show me churn by contract type" — get a chart back |
 | 🔍 Blind spot finder | 10 ranked insights with confidence scores and visualizations |
 | 🤖 AI agent | GPT-4o autonomously explores data like a senior analyst |
 | 📥 Export | Download cleaned data, insights and agent report |
@@ -44,7 +50,7 @@ you already chose.
 
 ## Tech stack
 
-Python · Streamlit · OpenAI GPT-4o · Pandas · Plotly · SciPy · Statsmodels
+Python · Streamlit · OpenAI GPT-4o · Pandas · Plotly · SciPy · Scikit-learn · Statsmodels
 
 ---
 
@@ -68,7 +74,7 @@ blindspot/
 │   ├── analyzer.py     ← statistical analysis engine
 │   ├── agent.py        ← AI agent with OpenAI tool calling
 │   ├── cleaner.py      ← smart data cleaning engine
-│   └── profiler.py     ← column profiling engine
+│   └── profiler.py     ← column profiling and health score
 └── requirements.txt
 ```
 
@@ -76,7 +82,7 @@ blindspot/
 
 ## Roadmap
 
+- [ ] Multi-file comparison — upload two CSVs and compare them
 - [ ] PDF export of full report
-- [ ] Time series analysis
-- [ ] Natural language query — ask questions about your data
 - [ ] User accounts and saved reports
+- [ ] API access for developers
