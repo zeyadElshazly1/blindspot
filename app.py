@@ -1166,6 +1166,164 @@ Rules:
                 use_container_width=True
             )
 
+
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+# Multi-file comparison — always visible
+st.markdown('<div class="step-header"><h3 style="margin:0">⚖️ Compare two datasets</h3><p style="margin:0;color:#888;font-size:0.9rem">Upload two CSV files and compare them side by side</p></div>', unsafe_allow_html=True)
+
+col_f1, col_f2 = st.columns(2)
+with col_f1:
+    file_a = st.file_uploader("Dataset A", type=["csv", "xlsx"], key="file_a")
+with col_f2:
+    file_b = st.file_uploader("Dataset B", type=["csv", "xlsx"], key="file_b")
+
+if file_a and file_b:
+    def load_file(f):
+        if f.name.endswith('.csv'):
+            try:
+                return pd.read_csv(f, encoding='utf-8-sig')
+            except:
+                f.seek(0)
+                return pd.read_csv(f, encoding='latin-1', on_bad_lines='skip')
+        else:
+            return pd.read_excel(f)
+
+    df_a = load_file(file_a)
+    df_b = load_file(file_b)
+
+    if st.button("⚖️ Compare datasets", use_container_width=True):
+        st.markdown("### ⚖️ Dataset comparison results")
+
+        # Shape comparison
+        st.markdown("#### Shape")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("A — rows", f"{df_a.shape[0]:,}")
+        c2.metric("B — rows", f"{df_b.shape[0]:,}", delta=f"{df_b.shape[0]-df_a.shape[0]:+,}")
+        c3.metric("A — columns", df_a.shape[1])
+        c4.metric("B — columns", df_b.shape[1], delta=f"{df_b.shape[1]-df_a.shape[1]:+,}")
+
+        st.markdown("---")
+
+        # Column comparison
+        st.markdown("#### Columns")
+        cols_a = set(df_a.columns.str.lower())
+        cols_b = set(df_b.columns.str.lower())
+        only_in_a = cols_a - cols_b
+        only_in_b = cols_b - cols_a
+        in_both = cols_a & cols_b
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Shared columns", len(in_both))
+        c2.metric("Only in A", len(only_in_a))
+        c3.metric("Only in B", len(only_in_b))
+
+        if only_in_a:
+            st.warning(f"Columns only in A: {', '.join(sorted(only_in_a))}")
+        if only_in_b:
+            st.warning(f"Columns only in B: {', '.join(sorted(only_in_b))}")
+
+        st.markdown("---")
+
+        # Health score comparison
+        st.markdown("#### Data quality")
+        from utils.profiler import calculate_health_score
+        health_a = calculate_health_score(df_a)
+        health_b = calculate_health_score(df_b)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("A health score", f"{health_a['total']} ({health_a['grade']})")
+        c2.metric("B health score", f"{health_b['total']} ({health_b['grade']})",
+                 delta=f"{round(health_b['total']-health_a['total'],1):+}")
+        c3.metric("Winner", "A" if health_a['total'] > health_b['total'] else "B" if health_b['total'] > health_a['total'] else "Tie")
+
+        breakdown_compare = pd.DataFrame({
+            "Dimension": list(health_a["breakdown"].keys()),
+            "Dataset A": list(health_a["breakdown"].values()),
+            "Dataset B": list(health_b["breakdown"].values()),
+        })
+        fig = px.bar(
+            breakdown_compare, x="Dimension", y=["Dataset A", "Dataset B"],
+            title="Health score breakdown comparison",
+            barmode="group",
+            color_discrete_sequence=["#667eea", "#68d391"]
+        )
+        fig.update_layout(height=300, margin=dict(t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
+        # Numeric stats comparison for shared columns
+        shared_numeric = [col for col in in_both
+                         if col in df_a.select_dtypes(include='number').columns.str.lower().tolist()
+                         and col in df_b.select_dtypes(include='number').columns.str.lower().tolist()]
+
+        if shared_numeric:
+            st.markdown("#### Numeric column comparison")
+            selected_compare_col = st.selectbox(
+                "Select column to compare",
+                shared_numeric,
+                key="compare_col"
+            )
+
+            # Find actual column names (case insensitive)
+            col_a_actual = [c for c in df_a.columns if c.lower() == selected_compare_col][0]
+            col_b_actual = [c for c in df_b.columns if c.lower() == selected_compare_col][0]
+
+            stats_comparison = pd.DataFrame({
+                "Stat": ["Mean", "Median", "Std", "Min", "Max", "Missing %"],
+                "Dataset A": [
+                    round(df_a[col_a_actual].mean(), 2),
+                    round(df_a[col_a_actual].median(), 2),
+                    round(df_a[col_a_actual].std(), 2),
+                    round(df_a[col_a_actual].min(), 2),
+                    round(df_a[col_a_actual].max(), 2),
+                    round(df_a[col_a_actual].isnull().mean() * 100, 1)
+                ],
+                "Dataset B": [
+                    round(df_b[col_b_actual].mean(), 2),
+                    round(df_b[col_b_actual].median(), 2),
+                    round(df_b[col_b_actual].std(), 2),
+                    round(df_b[col_b_actual].min(), 2),
+                    round(df_b[col_b_actual].max(), 2),
+                    round(df_b[col_b_actual].isnull().mean() * 100, 1)
+                ]
+            })
+            st.dataframe(stats_comparison, use_container_width=True, hide_index=True)
+
+            # Overlay distribution
+            df_a_plot = pd.DataFrame({selected_compare_col: df_a[col_a_actual], "dataset": "A"})
+            df_b_plot = pd.DataFrame({selected_compare_col: df_b[col_b_actual], "dataset": "B"})
+            df_combined = pd.concat([df_a_plot, df_b_plot])
+
+            fig = px.histogram(
+                df_combined,
+                x=selected_compare_col,
+                color="dataset",
+                title=f"Distribution comparison: {selected_compare_col}",
+                barmode="overlay",
+                opacity=0.7,
+                color_discrete_map={"A": "#667eea", "B": "#68d391"}
+            )
+            fig.update_layout(height=350, margin=dict(t=40, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
+        # Row overlap
+        st.markdown("#### Row overlap")
+        try:
+            common_cols = list(in_both)
+            df_a_lower = df_a.rename(columns=str.lower)[common_cols]
+            df_b_lower = df_b.rename(columns=str.lower)[common_cols]
+            merged = df_a_lower.merge(df_b_lower, how='inner')
+            overlap_count = len(merged)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Rows only in A", len(df_a) - overlap_count)
+            c2.metric("Rows in both", overlap_count)
+            c3.metric("Rows only in B", len(df_b) - overlap_count)
+        except:
+            st.info("Could not compute row overlap — columns may have different types.")
 else:
     # Landing page when no file uploaded
     st.markdown("### 👆 Upload a file above to get started")
